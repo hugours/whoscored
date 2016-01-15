@@ -195,12 +195,12 @@ def get_match(match_id, overwrite=False):
     if r.url != page:
         match = {'matchId': match_id, 'error': 'No page found'}
         print(match['error'])
-        matches.insert_one(match)
+        matches.update_one({'matchId': match['matchId']}, {'$set': {'error': match['error']}}, upsert=True)
         wait()
         return False
 
     matchId = re.findall("matchId = ([^;]+);", r.text)
-    matchData = re.findall("matchCentreData = ([^;]+);", r.text)
+    matchData = re.findall("matchCentreData = ([^;]+});", r.text)
 
     if matchData and matchData != ['null']:
         match = json.loads(matchData[0])
@@ -241,4 +241,4 @@ if __name__ == "__main__":
     get_all_tournaments()
     get_seasons()
     get_stages()
-    get_fixtures()
+    get_fixtures(1)
