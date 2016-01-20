@@ -206,21 +206,30 @@ def get_match(match_id, overwrite=False):
         match['matchId'] = int(matchId[0])
 
     else:
-        matchHeader = re.findall("matchHeader.load\(([^;]+)\r\n\);", r.text)[0].replace("'", '"')
-        matchHeader = re.sub(r',(?=,)', r',""', matchHeader)
+        matchData = re.findall("initialMatchDataForScrappers = ([^;]+);", r.text)[0].replace("'", '"')
+        matchData = re.sub(r',(?=,)', r',""', matchData)
+        matchData = json.loads(matchData)
 
-        fields = [['home', 'teamId'], ['away', 'teamId'], ['home', 'name'], ['away', 'name'],
-                  'startTime', 'startDate', 'statusCode', 'elapsed',
-                  'htScore', 'ftScore', 'etScore', 'pkScore', 'score'
-                  ]
+        matchHeader = matchData[0][0]
+        matchEvents = matchData[0][1]
+        matchLineup = matchData[0][2]
 
-        match = {'matchId': match_id, 'home': dict(), 'away': dict()}
-        for k, v in zip(fields, json.loads(matchHeader)):
+        fieldHeader = [['home', 'teamId'], ['away', 'teamId'], ['home', 'name'], ['away', 'name'],
+                       'startTime', 'startDate', 'statusCode', 'elapsed',
+                       'htScore', 'ftScore', 'etScore', 'pkScore', 'score'
+                       ]
+
+        match = {'matchId': match_id, 'home': {'field': 'home'}, 'away': {'field': 'away'}}
+
+        for k, v in zip(fieldHeader, matchHeader):
             if v:
                 if type(k) == list:
                     match[k[0]][k[1]] = v
                 else:
                     match[k] = v
+
+        parseLineup(matchLineup, match)
+        parseEvents(matchEvents, match)
 
     content = html.fromstring(r.text)
     link = content.xpath("//div[@id='breadcrumb-nav']/a/@href")
@@ -241,6 +250,62 @@ def get_match(match_id, overwrite=False):
 
     wait()
     return True
+
+
+def parseLineup(matchLineup, match):
+    if matchLineup[0:1] == 1:
+        match.setdefault('playerIdNameDictionary', dict())
+
+    if matchLineup[3:4] == 1:
+        match['home'].setdefault('players', list())
+
+    if matchLineup[4:5] == 1:
+        for record in matchLineup[9]:
+            player = {'name': record[0], 'playerId': record[3], 'field': 'home', 'isFirstEleven': True}
+            match['playerIdNameDictionary'][str(player['playerId'])] = player['name']
+            match['home']['players'].append(player)
+
+    if matchLineup[5:6] == 1:
+        for record in matchLineup[11]:
+            player = {'name': record[0], 'playerId': record[3], 'field': 'home'}
+            match['playerIdNameDictionary'][str(player['playerId'])] = player['name']
+            match['home']['players'].append(player)
+
+    if matchLineup[6:7] == 1:
+        match['away'].setdefault('players', list())
+
+    if matchLineup[7:8] == 1:
+        for record in matchLineup[10]:
+            player = {'name': record[0], 'playerId': record[3], 'field': 'away', 'isFirstEleven': True}
+            match['playerIdNameDictionary'][str(player['playerId'])] = player['name']
+            match['away']['players'].append(player)
+
+    if matchLineup[8:9] == 1:
+        for record in matchLineup[12]:
+            player = {'name': record[0], 'playerId': record[3], 'field': 'away'}
+            match['playerIdNameDictionary'][str(player['playerId'])] = player['name']
+            match['away']['players'].append(player)
+
+
+def parseEvents(matchEvents, match):
+    match.setdefault('keyEvents', list())
+    header = ['name', 'substituteName', 'eventType', 'score', 'detail', 'minute', 'playerId', 'substitutePlayerId']
+
+    for field in matchEvents[0:1]:
+        home_events = field[1]
+        away_events = field[2]
+
+        for record in home_events:
+            print(record)
+            event = {k: v for k, v in zip(header, record) if v not in ['', 0]}
+            event['field'] = 'home'
+            match['keyEvents'].append(event)
+
+        for record in away_events:
+            print(record)
+            event = {k: v for k, v in zip(header, record) if v not in ['', 0]}
+            event['field'] = 'away'
+            match['keyEvents'].append(event)
 
 
 def parseTeam(value):
