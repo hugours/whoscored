@@ -3,6 +3,7 @@ from lxml import html
 import requests
 import json
 import re
+from datetime import datetime
 
 
 def get_all_tournaments():
@@ -28,80 +29,78 @@ def get_all_tournaments():
             tournaments.replace_one({'tournamentId': tournament['tournamentId']}, tournament, upsert=True)
 
 
-def get_seasons(select=None, overwrite=False):
-    for tournament in tournaments.find(select if select else {}):
+def get_seasons(tournament_id, overwrite=False):
+    if seasons.find_one({'tournamentId': tournament_id}) and not overwrite:
+        print('Seasons already exist')
+        return True
 
-        if seasons.find_one({'tournamentId': tournament['tournamentId']}) and not overwrite:
-            print('Season already written')
-            continue
+    tournament = tournaments.find_one({'tournamentId': tournament_id})
+    page = SITE+'/Regions/{regionId}/Tournaments/{tournamentId}'.format(**tournament)
+    r = requests.get(page, headers=HEADERS)
+    print(r.url)
 
-        page = SITE+'/Regions/{regionId}/Tournaments/{tournamentId}'.format(**tournament)
-        r = requests.get(page, headers=HEADERS)
-        print(r.url)
+    if r.status_code != 200:
+        return False
 
-        if r.status_code != 200:
-            return False
+    content = html.fromstring(r.text)
+    season_links = content.xpath('//select[@id="seasons"]/option/@value')
+    season_names = content.xpath('//select[@id="seasons"]/option/text()')
 
-        content = html.fromstring(r.text)
-        season_links = content.xpath('//select[@id="seasons"]/option/@value')
-        season_names = content.xpath('//select[@id="seasons"]/option/text()')
+    for season_link, season_name in zip(season_links, season_names):
+        season = {
+            'seasonId': int(season_link.split('/')[-1]),
+            'name': season_name,
+            'regionId': tournament['regionId'],
+            'tournamentId': tournament['tournamentId'],
+        }
+        seasons.replace_one({'seasonId': season['seasonId']}, season, upsert=True)
 
-        for season_link, season_name in zip(season_links, season_names):
-            season = {
-                'seasonId': int(season_link.split('/')[-1]),
-                'name': season_name,
-                'regionId': tournament['regionId'],
-                'tournamentId': tournament['tournamentId'],
-            }
-            seasons.replace_one({'seasonId': season['seasonId']}, season, upsert=True)
+    if tournament['name'] == '':
+        tournament['name'] = content.xpath('//h1[@class="tournament-header"]/text()')[0].strip()
+        tournaments.save(tournament)
 
-        if tournament['name'] == '':
-            tournament['name'] = content.xpath('//h1[@class="tournament-header"]/text()')[0].strip()
-            tournaments.save(tournament)
-
-        wait()
+    wait()
 
 
-def get_stages(select=None, overwrite=False):
-    for season in seasons.find(select if select else {}).sort('seasonId'):
+def get_stages(season_id, overwrite=False):
+    if stages.find_one({'seasonId': season_id}) and not overwrite:
+        print('Stages already exist')
+        return True
 
-        if stages.find_one({'seasonId': season['seasonId']}) and not overwrite:
-            print('Stage already written')
-            continue
+    season = seasons.find_one({'seasonId': season_id})
+    page = SITE+'/Regions/{regionId}/Tournaments/{tournamentId}/Seasons/{seasonId}'.format(**season)
+    r = requests.get(page, headers=HEADERS)
+    print(r.url)
 
-        page = SITE+'/Regions/{regionId}/Tournaments/{tournamentId}/Seasons/{seasonId}'.format(**season)
-        r = requests.get(page, headers=HEADERS)
-        print(r.url)
+    if r.status_code != 200:
+        return False
 
-        if r.status_code != 200:
-            return False
+    content = html.fromstring(r.text)
+    stage_links = content.xpath("//select[@id='stages']/option/@value")
+    stage_names = content.xpath("//select[@id='stages']/option/text()")
 
-        content = html.fromstring(r.text)
-        stage_links = content.xpath("//select[@id='stages']/option/@value")
-        stage_names = content.xpath("//select[@id='stages']/option/text()")
+    for stage_link, stage_name in zip(stage_links, stage_names):
+        stage = {
+            'stageId': int(stage_link.split('/')[-1]),
+            'name': stage_name,
+            'regionId': season['regionId'],
+            'tournamentId': season['tournamentId'],
+            'seasonId': season['seasonId'],
+        }
+        stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
 
-        for stage_link, stage_name in zip(stage_links, stage_names):
-            stage = {
-                'stageId': int(stage_link.split('/')[-1]),
-                'name': stage_name,
-                'regionId': season['regionId'],
-                'tournamentId': season['tournamentId'],
-                'seasonId': season['seasonId'],
-            }
-            stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
+    if len(stage_links) == 0:
+        fixture_link = content.xpath("//div[@id='sub-navigation']/ul/li/a[text()='Fixtures']/@href")[0]
+        stage = {
+            'stageId': int(fixture_link.split("/")[-3]),
+            'name': content.xpath('//h1/text()')[0].strip(),
+            'regionId': season['regionId'],
+            'tournamentId': season['tournamentId'],
+            'seasonId': season['seasonId'],
+        }
+        stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
 
-        if len(stage_links) == 0:
-            fixture_link = content.xpath("//div[@id='sub-navigation']/ul/li/a[text()='Fixtures']/@href")[0]
-            stage = {
-                'stageId': int(fixture_link.split("/")[-3]),
-                'name': content.xpath('//h1/text()')[0].strip(),
-                'regionId': season['regionId'],
-                'tournamentId': season['tournamentId'],
-                'seasonId': season['seasonId'],
-            }
-            stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
-
-        wait()
+    wait()
 
 
 def get_fixtures(stage_id, overwrite=False):
@@ -231,14 +230,57 @@ def get_match(match_id, overwrite=False):
             key = key[:-1].lower() + 'Id'
             match[key] = int(val)
 
+    match['startDate'] = datetime.strptime(match['startDate'], '%m/%d/%Y %H:%M:%S')
+    match['startTime'] = datetime.strptime(match['startTime'], '%m/%d/%Y %H:%M:%S')
+    if 'timeStamp' in match:
+        try:
+            match['timeStamp'] = datetime.strptime(match['timeStamp'], '%d/%m/%Y %H:%M:%S')
+        except ValueError:
+            match['timeStamp'] = datetime.strptime(match['timeStamp'], '%Y-%m-%d %H:%M:%S')
     matches.replace_one({'matchId': match_id}, match, upsert=True)
 
     wait()
     return True
 
 
+def fix_dates():
+    for match in matches.find({'startDate': {'$type': 2}}).sort('matchId', -1).batch_size(100):
+        print(match['matchId'])
+        match['startDate'] = datetime.strptime(match['startDate'], '%m/%d/%Y %H:%M:%S')
+        match['startTime'] = datetime.strptime(match['startTime'], '%m/%d/%Y %H:%M:%S')
+        if 'timeStamp' in match:
+            try:
+                match['timeStamp'] = datetime.strptime(match['timeStamp'], '%d/%m/%Y %H:%M:%S')
+            except ValueError:
+                match['timeStamp'] = datetime.strptime(match['timeStamp'], '%Y-%m-%d %H:%M:%S')
+        matches.save(match)
+
+
+def update_matches(status_code=1):
+    # 0: Error
+    # 1: Pending
+    # 2: Postponed
+    # 3: In-Play
+    # 4: (Not seen)
+    # 5: Abandoned
+    # 6: Complete
+    # 7: Cancelled
+    # 8: (Who knows?)
+    for match in matches.find({'statusCode': status_code,
+                               'error': {'$exists': False},
+                               'startDate': {'$lte': datetime.today()}
+                               }).sort('startDate', -1):
+        print(match['matchId'], match['statusCode'], match['startTime'])
+        get_match(match['matchId'], overwrite=True)
+
+
 if __name__ == "__main__":
     get_all_tournaments()
-    get_seasons()
-    get_stages()
-    get_fixtures(1)
+    get_seasons(2)
+    get_stages(2)
+    get_fixtures(2)
+    get_match(20, overwrite=True)
+
+    fix_dates()
+    update_matches()
+    
