@@ -1,4 +1,4 @@
-from settings import SITE, HEADERS, regions, tournaments, seasons, stages, matches, wait
+from settings import SITE, HEADERS, regions, tournaments, seasons, stages, matches, players, wait
 from lxml import html
 import requests
 import json
@@ -243,6 +243,70 @@ def get_match(match_id, overwrite=False):
     return True
 
 
+def parseTeam(value):
+    return int(value.split('/')[-3])
+
+
+def parseDate(value):
+    return datetime.strptime(value, '%d-%m-%Y')
+
+
+def parseHeight(value):
+    return int(value.replace('cm', ''))
+
+
+def parseWeight(value):
+    return int(value.replace('kg', ''))
+
+
+def get_player(player_id, overwrite=False):
+    keys = {
+        'Name:': {'xpath': 'dd/text()', 'key': 'name', 'parse': str},
+        'Current Team:': {'xpath': 'dd/a/@href', 'key': 'teamId', 'parse': parseTeam},
+        'Shirt Number:': {'xpath': 'dd/text()', 'key': 'number', 'parse': int},
+        'Positions:': {'xpath': 'dd/ul/li/text()', 'key': 'position', 'parse': str},
+        'Age:': {'xpath': 'dd/i/text()', 'key': 'birthDate', 'parse': parseDate},
+        'Height:': {'xpath': 'dd/text()', 'key': 'height', 'parse': parseHeight},
+        'Weight:': {'xpath': 'dd/text()', 'key': 'weight', 'parse': parseWeight},
+        'Nationality:': {'xpath': 'dd/span/text()', 'key': 'nationality', 'parse': str},
+    }
+
+    player = players.find_one({'playerId': player_id})
+    if not player:
+        player = {'playerId': player_id}
+    elif not overwrite:
+        print('Player already exists')
+        return True
+
+    page = SITE+'/Players/{0}'.format(player_id)
+    r = requests.get(page, headers=HEADERS)
+    print(r.url)
+
+    if r.status_code != 200:
+        wait()
+        return False
+
+    if page != r.url:
+        wait()
+        return False
+
+    content = html.fromstring(r.text)
+    blocks = content.xpath("//div[@class='player-info']/div/div/dl")
+
+    for block in blocks:
+        title = block.xpath('dt/text()')[0]
+        if title in keys:
+            k = keys[title]
+        else:
+            print('Unexpected info: "{}"'.format(title))
+            continue
+        value = block.xpath(k['xpath'])[0].strip()
+        player[k['key']] = k['parse'](value)
+
+    players.save(player)
+    wait()
+
+
 def fix_dates():
     for match in matches.find({'startDate': {'$type': 2}}).sort('matchId', -1).batch_size(100):
         print(match['matchId'])
@@ -280,7 +344,7 @@ if __name__ == "__main__":
     get_stages(2)
     get_fixtures(2)
     get_match(20, overwrite=True)
+    get_player(17, overwrite=True)
 
     fix_dates()
     update_matches()
-    
