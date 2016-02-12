@@ -1,4 +1,4 @@
-from settings import matches, events, players, teams
+from settings import matches, events, players, teams, matchheaders
 from datetime import datetime
 
 
@@ -21,16 +21,20 @@ def load_events():
     print(datetime.now(), 'Complete')
 
 
-def load_players_and_teams():
-    for match in matches.find({'error': {'$exists': False}}).sort('matchId', -1):
+def load_players():
+    for match in matches.find({'playerIdNameDictionary': {'$exists': True}}).sort('matchId', 1):
         print(match['matchId'])
-        if 'playerIdNameDictionary' in match:
-            for k, v in match['playerIdNameDictionary'].items():
-                players.update_one({'playerId': int(k)}, {'$set': {'name': v}}, upsert=True)
+        for k, v in match['playerIdNameDictionary'].items():
+            players.update_one({'playerId': int(k)}, {'$setOnInsert': {'name': v}}, upsert=True)
 
-        teams.update_one({'teamId': match['home']['teamId']}, {'$set': {'name': match['home']['name']}}, upsert=True)
-        teams.update_one({'teamId': match['away']['teamId']}, {'$set': {'name': match['away']['name']}}, upsert=True)
+
+def load_teams():
+    for match in matchheaders.find().sort('matchId'):
+        print(match['matchId'])
+        teams.update_one({'teamId': match['home']['teamId']}, {'$setOnInsert': {'name': match['home']['name']}}, upsert=True)
+        teams.update_one({'teamId': match['away']['teamId']}, {'$setOnInsert': {'name': match['away']['name']}}, upsert=True)
 
 if __name__ == "__main__":
-    # load_events()
-    load_players_and_teams()
+    load_events()
+    load_players()
+    load_teams()
