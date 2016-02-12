@@ -17,16 +17,19 @@ def get_all_tournaments():
     all_regions = re.sub(r'(\w+):', r'"\1":', all_regions)
 
     for region in json.loads(all_regions):
-        region['regionId'] = region.pop('id')
+        regions.update_one({'regionId': region['id']},
+                           {'$setOnInsert': {
+                               'name': region['name'],
+                               'type': region['type']}},
+                           upsert=True)
         tournament_list = region.pop('tournaments')
-        region.pop('flg')
-        regions.replace_one({'regionId': region['regionId']}, region, upsert=True)
 
         for tournament in tournament_list:
-            tournament['tournamentId'] = tournament.pop('id')
-            tournament['regionId'] = region['regionId']
-            tournament.pop('url')
-            tournaments.replace_one({'tournamentId': tournament['tournamentId']}, tournament, upsert=True)
+            tournaments.update_one({'tournamentId': tournament['id']},
+                                   {'$setOnInsert': {
+                                       'name': tournament['name'],
+                                       'regionId': region['id']}},
+                                   upsert=True)
 
 
 def get_seasons(tournament_id, overwrite=False):
@@ -53,11 +56,33 @@ def get_seasons(tournament_id, overwrite=False):
             'regionId': tournament['regionId'],
             'tournamentId': tournament['tournamentId'],
         }
-        seasons.replace_one({'seasonId': season['seasonId']}, season, upsert=True)
+        seasons.update_one({'seasonId': season['seasonId']},
+                           {'$setOnInsert': {
+                               'name': season['name'],
+                               'regionId': tournament['regionId'],
+                               'tournamentId': tournament['tournamentId']}},
+                           upsert=True)
 
+    # Sometimes the tournament doesn't have a name in the main menu - use the title on the page
     if tournament['name'] == '':
-        tournament['name'] = content.xpath('//h1[@class="tournament-header"]/text()')[0].strip()
-        tournaments.save(tournament)
+        tournament_name = content.xpath('//h1[@class="tournament-header"]/text()')[0].strip()
+        tournaments.update_one({'tournamentId': tournament['tournamentId']}, {'$se': {'name': tournament_name}})
+
+    # Some tournaments don't show up in the main menu - take a fuller list from the dropdown menu
+    tournament_links = content.xpath('//select[@id="tournaments"]/option/@value')
+    tournament_names = content.xpath('//select[@id="tournaments"]/option/text()')
+
+    for tournament_link, tournament_name in zip(tournament_links, tournament_names):
+        new_tournament = {
+            'tournamentId': int(tournament_link.split('/')[-1]),
+            'name': tournament_name,
+            'regionId': tournament['regionId'],
+        }
+        tournaments.update_one({'tournamentId': new_tournament['tournamentId']},
+                               {'$setOnInsert': {
+                                   'name': new_tournament['name'],
+                                   'regionId': new_tournament['regionId']}},
+                               upsert=True)
 
     wait()
 
@@ -80,30 +105,32 @@ def get_stages(season_id, overwrite=False):
     stage_names = content.xpath("//select[@id='stages']/option/text()")
 
     for stage_link, stage_name in zip(stage_links, stage_names):
-        stage = {
-            'stageId': int(stage_link.split('/')[-1]),
-            'name': stage_name,
-            'regionId': season['regionId'],
-            'tournamentId': season['tournamentId'],
-            'seasonId': season['seasonId'],
-        }
-        stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
+        stages.update_one({'stageId': int(stage_link.split('/')[-1])},
+                          {'$setOnInsert': {
+                              'name': stage_name,
+                              'regionId': season['regionId'],
+                              'tournamentId': season['tournamentId'],
+                              'seasonId': season['seasonId']}},
+                          upsert=True)
 
     if len(stage_links) == 0:
         fixture_link = content.xpath("//div[@id='sub-navigation']/ul/li/a[text()='Fixtures']/@href")[0]
-        stage = {
-            'stageId': int(fixture_link.split("/")[-3]),
-            'name': content.xpath('//h1/text()')[0].strip(),
-            'regionId': season['regionId'],
-            'tournamentId': season['tournamentId'],
-            'seasonId': season['seasonId'],
-        }
-        stages.replace_one({'stageId': stage['stageId']}, stage, upsert=True)
+        stages.update_one({'stageId': int(fixture_link.split("/")[-3])},
+                          {'$setOnInsert': {
+                              'name': content.xpath('//h1/text()')[0].strip(),
+                              'regionId': season['regionId'],
+                              'tournamentId': season['tournamentId'],
+                              'seasonId': season['seasonId']}},
+                          upsert=True)
 
     wait()
 
 
 def get_fixtures(stage_id, overwrite=False):
+    if matchheaders.find_one({'stageId': stage_id}) and not overwrite:
+        print('Matches already exist')
+        return True
+
     stage = stages.find_one({'stageId': stage_id})
     page = SITE+'/Regions/{regionId}/Tournaments/{tournamentId}/Seasons/{seasonId}/Stages/{stageId}/Fixtures'.format(**stage)
     r = requests.get(page, headers=HEADERS)
