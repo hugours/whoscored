@@ -1,5 +1,6 @@
-from settings import SITE, HEADERS, regions, tournaments, seasons, stages, matches, players, wait
+from settings import SITE, HEADERS, regions, tournaments, seasons, stages, matches, players, wait, matchheaders
 from lxml import html
+from html import unescape
 import requests
 import json
 import re
@@ -146,20 +147,18 @@ def get_fixtures(stage_id, overwrite=False):
     headers['Referer'] = r.url
     headers['X-Requested-With'] = 'XMLHttpRequest'
 
-    # Not needed - only first element required
-    # fields = ['matchId', 'statusCode', 'startDate', 'koTime',
-    #           ['home', 'teamId'], ['home', 'name'], ['home', 'redCards'],
-    #           ['away', 'teamId'], ['away', 'name'], ['away', 'redCards'],
-    #           'ftScore', 'htScore', 'hasScorer', 'unknown', 'elapsed', '1x2',
-    #           ]
-
     dates = re.findall("'Month', ([^ ]+), min, max", r.text)
     if dates:
         dates = re.sub(r'(\d+)(?=:)', r'"\1"', dates[0])
         d = json.loads(dates)
 
+        if len(d) == 0:
+            print('No matches')
+            wait()
+            return False
+
         months = {format(d): format(d+1, '02') for d in range(0, 12)}
-        params = {'d': '201602', 'isAggregate': 'false'}
+        params = {'isAggregate': 'false'}
 
         for y in d:
             for m in d[y]:
@@ -178,31 +177,93 @@ def get_fixtures(stage_id, overwrite=False):
                 data = json.loads(matchData.replace("'", '"'))
 
                 for row in data:
-                    match = {'matchId': row[0]}
-                    if matches.find_one({'matchId': match['matchId']}) and not overwrite:
+                    match = {'matchId': row[0], 'statusCode': row[1], 'startDate': row[2], 'startTime': row[3],
+                             'home': {'teamId': row[4], 'name': row[5], 'field': 'home'},
+                             'away': {'teamId': row[7], 'name': row[8], 'field': 'away'},
+                             'score': row[10], 'elapsed': row[14], 'result': row[15], 'international': row[16],
+                             'hasKeyEvents': row[12], 'hasPreview': row[13], 'isOpta': row[17], 'isOtherOpta': row[19],
+                             }
+
+                    if matchheaders.find_one({'matchId': match['matchId']}) and not overwrite:
                         print('Match already exists')
                     else:
+                        match['startDate'] = datetime.strptime(match['startDate'], '%A, %b %d %Y')
+                        match['startTime'] = datetime.strptime(match['startTime'], '%H:%M')
+                        match['startTime'] = datetime.combine(match['startDate'].date(), match['startTime'].time())
                         for k, v in stage.items():
                             if 'Id' in k:
                                 match[k] = v
 
-                        matches.replace_one({'matchId': match['matchId']}, match, upsert=True)
+                        matchheaders.replace_one({'matchId': match['matchId']}, match, upsert=True)
     else:
         matchData = re.findall("calendarParameter\), ([^;]*)\);", r.text)
         matchData = re.sub(r',(?=,)', r',null', matchData[0])
         data = json.loads(matchData.replace("'", '"') if matchData else '{}')
 
         for row in data:
-            match = {'matchId': row[0]}
-            if matches.find_one({'matchId': match['matchId']}) and not overwrite:
+            match = {'matchId': row[0], 'statusCode': row[1], 'startDate': row[2], 'startTime': row[3],
+                     'home': {'teamId': row[4], 'name': row[5], 'field': 'home'},
+                     'away': {'teamId': row[7], 'name': row[8], 'field': 'away'},
+                     'score': row[10], 'elapsed': row[14], 'result': row[15], 'international': row[16],
+                     'hasKeyEvents': row[12], 'hasPreview': row[13], 'isOpta': row[17], 'isOtherOpta': row[19],
+                     }
+
+            if matchheaders.find_one({'matchId': match['matchId']}) and not overwrite:
                 print('Match already exists')
             else:
+                match['startDate'] = datetime.strptime(match['startDate'], '%A, %b %d %Y')
+                match['startTime'] = datetime.strptime(match['startTime'], '%H:%M')
+                match['startTime'] = datetime.combine(match['startDate'].date(), match['startTime'].time())
                 for k, v in stage.items():
                     if 'Id' in k:
                         match[k] = v
 
-                matches.replace_one({'matchId': match['matchId']}, match, upsert=True)
+                matchheaders.replace_one({'matchId': match['matchId']}, match, upsert=True)
+    wait()
+
+
+def get_fixtures_for_date(d=None, overwrite=False):
+    if d is None:
+        params = {'d': datetime.strftime(datetime.utcnow(), '%Y%m%d')}
+    elif type(d) is datetime:
+        params = {'d': datetime.strftime(d, '%Y%m%d')}
+    elif type(d) in [str, int]:
+        params = {'d': d}
+    else:
+        print('Unknown date type')
+        return False
+
+    page = SITE+'/LiveScores/'
+    r = requests.get(page, headers=HEADERS)
+    print(r.url)
+
+    if r.status_code != 200:
         wait()
+        return False
+
+    model_last_mode = re.findall("'Model-Last-Mode': '([^']+)'", r.text)[0]
+    headers = HEADERS.copy()
+    headers['Model-Last-Mode'] = model_last_mode
+    headers['Referer'] = r.url
+    headers['X-Requested-With'] = 'XMLHttpRequest'
+    print(model_last_mode)
+    wait()
+
+    page = SITE+'/matchesfeed/'
+    r = requests.get(page, params=params, headers=HEADERS, allow_redirects=False)
+    print(r.url, r.status_code)
+    print(r.text)
+
+    if r.status_code != 200:
+        wait()
+        return False
+
+    matchData = re.sub(r'([,[])(?=[,\]])', r'\1null', r.text)
+    data = json.loads(matchData.replace("'", '"'))
+    print(data)
+
+    stageData = data[1]
+    matchData = data[2]
 
 
 def get_match(match_id, overwrite=False):
@@ -212,7 +273,9 @@ def get_match(match_id, overwrite=False):
 
     page = SITE+'/Matches/{0}/Live'.format(match_id)
     r = requests.get(page, headers=HEADERS)
+
     print(r.url)
+    content = unescape(r.text)
 
     if r.status_code != 200:
         wait()
@@ -225,21 +288,32 @@ def get_match(match_id, overwrite=False):
         wait()
         return False
 
-    matchId = re.findall("matchId = ([^;]+);", r.text)
-    matchData = re.findall("matchCentreData = ([^;]+});", r.text)
+    matchId = re.findall("matchId = ([^;]+);", content)
+    matchData = re.findall("matchCentreData = ([^;]+});", content)
 
     if matchData and matchData != ['null']:
-        match = json.loads(matchData[0])
+        match = json.loads(matchData[0], strict=False)
         match['matchId'] = int(matchId[0])
 
     else:
-        matchData = re.findall("initialMatchDataForScrappers = ([^;]+);", r.text)[0].replace("'", '"')
-        matchData = re.sub(r',(?=,)', r',""', matchData)
-        matchData = json.loads(matchData)
+        matchData = re.findall("initialMatchDataForScrappers = (.+]);", content, re.DOTALL)
 
-        matchHeader = matchData[0][0]
-        matchEvents = matchData[0][1]
-        matchLineup = matchData[0][2]
+        if matchData:
+            matchData = re.sub(r'([,[])(?=[,\]])', r'\1null', matchData[0].replace("'", '"'))
+            matchData = json.loads(matchData, strict=False)
+
+            matchHeader = matchData[0][0]
+            matchEvents = matchData[0][1]
+            matchLineup = matchData[0][2]
+            timeInterval = matchData[1]
+
+        else:
+            matchData = re.findall("matchHeader.load\(([^;]+)\r\n\);", content)
+            matchData = re.sub(r'([,[])(?=[,\]])', r'\1null', matchData[0].replace("'", '"'))
+
+            matchHeader = json.loads(matchData, strict=False)
+            matchEvents = []
+            matchLineup = []
 
         fieldHeader = [['home', 'teamId'], ['away', 'teamId'], ['home', 'name'], ['away', 'name'],
                        'startTime', 'startDate', 'statusCode', 'elapsed',
@@ -256,7 +330,8 @@ def get_match(match_id, overwrite=False):
                     match[k] = v
 
         parseLineup(matchLineup, match)
-        parseEvents(matchEvents, match)
+        if matchEvents[:1]:
+            parseEvents(matchEvents, match)
 
     content = html.fromstring(r.text)
     link = content.xpath("//div[@id='breadcrumb-nav']/a/@href")
@@ -266,8 +341,8 @@ def get_match(match_id, overwrite=False):
             key = key[:-1].lower() + 'Id'
             match[key] = int(val)
 
-    match['startDate'] = datetime.strptime(match['startDate'], '%m/%d/%Y %H:%M:%S')
-    match['startTime'] = datetime.strptime(match['startTime'], '%m/%d/%Y %H:%M:%S')
+    match['startDate'] = datetime.strptime(match['startDate'], '%m/%d/%Y %I:%M:%S %p')
+    match['startTime'] = datetime.strptime(match['startTime'], '%m/%d/%Y %I:%M:%S %p')
     if 'timeStamp' in match:
         try:
             match['timeStamp'] = datetime.strptime(match['timeStamp'], '%d/%m/%Y %H:%M:%S')
