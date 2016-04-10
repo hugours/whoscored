@@ -468,7 +468,7 @@ def get_player(player_id, overwrite=False):
         else:
             print('Unexpected info: "{}"'.format(title))
             continue
-        value = block.xpath(k['xpath'])[0].strip()
+        value = ', '.join([p.strip() for p in block.xpath(k['xpath']) if p.strip() != ''])
         player[k['key']] = k['parse'](value)
 
     players.save(player)
