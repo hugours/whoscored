@@ -390,21 +390,20 @@ def parseLineup(matchLineup, match):
 
 
 def parseEvents(matchEvents, match):
-    match.setdefault('keyEvents', list())
+    if matchEvents != []:
+        match.setdefault('keyEvents', list())
     header = ['name', 'substituteName', 'eventType', 'score', 'detail', 'minute', 'playerId', 'substitutePlayerId']
 
-    for field in matchEvents[0:1]:
+    for field in matchEvents[0]:
         home_events = field[1]
         away_events = field[2]
 
         for record in home_events:
-            print(record)
             event = {k: v for k, v in zip(header, record) if v not in ['', 0]}
             event['field'] = 'home'
             match['keyEvents'].append(event)
 
         for record in away_events:
-            print(record)
             event = {k: v for k, v in zip(header, record) if v not in ['', 0]}
             event['field'] = 'away'
             match['keyEvents'].append(event)
