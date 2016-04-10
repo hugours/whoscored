@@ -429,6 +429,7 @@ def parseWeight(value):
 def get_player(player_id, overwrite=False):
     keys = {
         'Name:': {'xpath': 'dd/text()', 'key': 'name', 'parse': str},
+        'Full Name:': {'xpath': 'dd/text()', 'key': 'fullName', 'parse': str},
         'Current Team:': {'xpath': 'dd/a/@href', 'key': 'teamId', 'parse': parseTeam},
         'Shirt Number:': {'xpath': 'dd/text()', 'key': 'number', 'parse': int},
         'Positions:': {'xpath': 'dd/ul/li/text()', 'key': 'position', 'parse': str},
