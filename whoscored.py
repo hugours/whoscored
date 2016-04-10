@@ -487,7 +487,7 @@ def fix_dates():
         matches.save(match)
 
 
-def update_matches(status_code=1):
+def update_matches(status_code=None):
     # 0: Error
     # 1: Pending
     # 2: Postponed
@@ -496,22 +496,24 @@ def update_matches(status_code=1):
     # 5: Abandoned
     # 6: Complete
     # 7: Cancelled
-    # 8: (Who knows?)
+    # 8: Ignore
+    if status_code is None or type(status_code) is not int:
+        status_code = {'$in': [1, 3]}
+
     for match in matches.find({'statusCode': status_code,
                                'error': {'$exists': False},
-                               'startDate': {'$lte': datetime.today()}
-                               }).sort('startDate', -1):
+                               'startDate': {'$lte': datetime.today()},
+                               'startTime': {'$lte': datetime.today()},
+                               }).sort([('statusCode', 1), ('startDate', -1)]):
         print(match['matchId'], match['statusCode'], match['startTime'])
         get_match(match['matchId'], overwrite=True)
 
 
 if __name__ == "__main__":
     get_all_tournaments()
-    get_seasons(2)
-    get_stages(2)
-    get_fixtures(2)
-    get_match(20, overwrite=True)
-    get_player(17, overwrite=True)
-
-    fix_dates()
-    update_matches()
+    for tournament in tournaments.find({'tournamentId': 2}):
+        get_seasons(tournament['tournamentId'], overwrite=True)
+    for season in seasons.find({'tournamentId': 2}):
+        get_stages(season['seasonId'], overwrite=True)
+    for stage in stages.find({'tournamentId': 2}):
+        get_fixtures(stage['stageId'], overwrite=True)
